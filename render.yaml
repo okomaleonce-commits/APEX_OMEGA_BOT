@@ -4,10 +4,6 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    disk:
-      name: apex-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -29,5 +25,7 @@ services:
         value: "1000"
       - key: DEFAULT_MODE
         value: safe
-      - key: SCAN_HOURS_AHEAD
-        value: "24"
+    disk:
+      name: apex-data
+      mountPath: /var/data
+      sizeGB: 1

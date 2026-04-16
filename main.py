@@ -1,46 +1,24 @@
 """
 APEX OMEGA — main.py
-Entry point.
-  - python main.py             → Start Telegram bot
-  - python main.py scan 24h    → CLI scan
-  - python main.py analyse "Arsenal" "Chelsea" → CLI match analysis
-  - python main.py report      → CLI ghost memory report
+Entry point: runs Telegram bot by default, or CLI if args provided.
+
+  python main.py              → Telegram bot (polling)
+  python main.py scan 24h     → CLI scan
+  python main.py match Arsenal Chelsea
+  python main.py report
 """
 import sys
-import logging
-
-# Must import logger setup first
-import core.logger  # noqa: F401
-
-from core.database import init_db
-
-log = logging.getLogger("apex.main")
-
-CLI_COMMANDS = ("scan", "report", "analyse")
-
+import core.logger  # noqa — sets up logging
 
 def main():
-    init_db()
-
-    args = sys.argv[1:]
-
-    if args and args[0].lower() in CLI_COMMANDS:
-        # ── CLI mode ─────────────────────────────────────────────
+    # If CLI args provided, run CLI
+    if len(sys.argv) > 1 and sys.argv[1] in ("scan", "match", "report", "history", "result"):
         from interfaces.cli import run_cli
-        run_cli(args)
+        run_cli(sys.argv[1:])
     else:
-        # ── Telegram bot mode ─────────────────────────────────────
-        from core.config import BOT_TOKEN
-        if not BOT_TOKEN:
-            log.error("BOT_TOKEN not set — cannot start Telegram bot")
-            print("ERROR: BOT_TOKEN environment variable is required.")
-            print("Run CLI mode: python main.py scan 24h")
-            sys.exit(1)
-
-        log.info("Starting APEX OMEGA Telegram Bot…")
+        # Default: run Telegram bot
         from interfaces.telegram_bot import run_bot
         run_bot()
-
 
 if __name__ == "__main__":
     main()

@@ -1,401 +1,361 @@
 """
 APEX OMEGA — interfaces/telegram_bot.py
-Full Telegram bot with commands + natural language match analysis.
-Commands: /start /scan /scan_today /stats /mode /help
-NLP: "PSG Lens 25/04" | "EPL Arsenal Chelsea demain"
+Full Telegram bot: commands + natural language match parsing.
+All scan calls route through scanner/scan_engine.py.
 """
-import asyncio
 import logging
 import re
+import asyncio
 from datetime import datetime, timezone
-from typing import Optional
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ContextTypes, filters
 )
 from telegram.constants import ParseMode
 
-from core.config import BOT_TOKEN, CHAT_ID, BANKROLL, LEAGUES
+from core.config import BOT_TOKEN, BANKROLL, DEFAULT_MODE
 from core.database import init_db
-from scanner.scan_engine import run_scan, analyse_single_match
-from decisions.rationale_builder import (
-    format_verdict_telegram, format_scan_summary_telegram,
-    format_stats_telegram
-)
-from storage.signals_repo import get_ghost_stats, get_recent_signals
+from scanner.scan_engine import run_scan, analyse_by_teams
+from decisions.rationale_builder import format_verdict_telegram, format_scan_summary
+from storage.signals_repo import get_ghost_stats, get_recent_signals, update_signal_result
 
 log = logging.getLogger("apex.telegram")
 
-# ── BOT STATE (in-memory) ──────────────────────────────────────
-_state = {
-    "mode": "safe",
-    "bankroll": BANKROLL,
-    "scanning": False,
+_BOT_MODE = DEFAULT_MODE
+_BANKROLL = BANKROLL
+_SCANNING = False
+
+LEAGUE_ALIASES = {
+    "epl": 39, "premier": 39, "premierleague": 39, "pl": 39,
+    "laliga": 140, "liga": 140, "espagne": 140,
+    "bundesliga": 78, "bl": 78, "allemagne": 78,
+    "seriea": 135, "serie": 135, "italie": 135,
+    "ligue1": 61, "l1": 61, "france": 61,
+    "ucl": 2, "cl": 2, "champions": 2,
+    "uel": 3, "europa": 3,
+    "uecl": 848, "conference": 848,
 }
 
-MAX_MESSAGE_LEN = 4000
-
-
-# ── COMMAND HANDLERS ──────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [
-        [InlineKeyboardButton("🔍 Scan 24h",    callback_data="scan_24"),
-         InlineKeyboardButton("📅 Scan Aujourd'hui", callback_data="scan_today")],
-        [InlineKeyboardButton("📊 Stats",        callback_data="stats"),
-         InlineKeyboardButton("⚙️ Mode",         callback_data="mode_toggle")],
-    ]
-    markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🤖 *APEX OMEGA — Bot de Paris Sportif*\n\n"
-        "Moteur Dixon\\-Coles \\+ Ghost Signal Memory \\+ Trust Matrix\n\n"
-        "*Commandes disponibles :*\n"
-        "`/scan` — Scan 24h\n"
-        "`/scan today` — Scan du jour\n"
-        "`/scan 1h` — Urgence \\(prochaine heure\\)\n"
-        "`/scan 3h` — 3 heures\n"
-        "`/scan 6h` — 6 heures\n"
-        "`/stats` — Statistiques\n"
-        "`/mode` — Basculer Safe/Aggressive\n"
-        "`/help` — Aide\n\n"
-        "*Analyse directe :*\n"
-        "`Arsenal Chelsea` — Analyse ce match\n"
-        "`EPL Arsenal Chelsea 26/04` — Avec ligue et date",
-        parse_mode=ParseMode.MARKDOWN_V2,
-        reply_markup=markup
+    text = (
+        "╔══════════════════════════════════════╗\n"
+        "║  *APEX OMEGA BOT v1\\.0*\n"
+        "╚══════════════════════════════════════╝\n\n"
+        "🤖 Intelligence analytique football activée\\.\n\n"
+        "*COMMANDES:*\n"
+        "  /scan — Scan 24h\n"
+        "  /scan\\_today — Matchs du jour\n"
+        "  /scan\\_1h — Urgence 1h\n"
+        "  /scan\\_3h — Prochaines 3h\n"
+        "  /scan\\_6h — Prochaines 6h\n"
+        "  /scan\\_12h — Prochaines 12h\n"
+        "  /scan\\_48h — Prochaines 48h\n"
+        "  /stats — Ghost Memory & P\\&L\n"
+        "  /history — 10 derniers signaux\n"
+        "  /mode — Safe ↔ Aggressive\n"
+        "  /bankroll \\[montant\\] — Définir bankroll\n\n"
+        "*ANALYSE DIRECTE \\(exemples\\):*\n"
+        "  `Arsenal Chelsea`\n"
+        "  `ligue1 PSG Lyon`\n"
+        "  `ucl Man City Real Madrid`\n"
+        "  `Arsenal Chelsea 15/07`\n\n"
+        f"Mode: *{_BOT_MODE\\.upper\\(\\)}* \\| Bankroll: *{_BANKROLL:.0f}u*"
     )
+    # Use simpler text to avoid MarkdownV2 issues
+    simple = (
+        "APEX OMEGA BOT v1.0\n\n"
+        "Commandes disponibles:\n"
+        "/scan | /scan_today | /scan_1h | /scan_3h\n"
+        "/scan_6h | /scan_12h | /scan_48h\n"
+        "/stats | /history | /mode | /bankroll\n\n"
+        "Analyse directe:\n"
+        "  Arsenal Chelsea\n"
+        "  ligue1 PSG Lyon\n"
+        "  ucl Man City Real Madrid 15/07\n\n"
+        f"Mode: {_BOT_MODE.upper()} | Bankroll: {_BANKROLL:.0f}u"
+    )
+    await update.message.reply_text(simple)
 
 
 async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /scan, /scan today, /scan Nh"""
-    args = ctx.args or []
-    arg  = " ".join(args).strip().lower()
+    await _do_scan(update, ctx, hours=24)
 
-    if _state["scanning"]:
-        await update.message.reply_text("⏳ Scan déjà en cours, veuillez patienter…")
+async def cmd_scan_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    now = datetime.now(timezone.utc)
+    hours = max(24 - now.hour, 1)
+    await _do_scan(update, ctx, hours=hours)
+
+async def cmd_scan_1h(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _do_scan(update, ctx, hours=1)
+
+async def cmd_scan_3h(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _do_scan(update, ctx, hours=3)
+
+async def cmd_scan_6h(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _do_scan(update, ctx, hours=6)
+
+async def cmd_scan_12h(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _do_scan(update, ctx, hours=12)
+
+async def cmd_scan_48h(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _do_scan(update, ctx, hours=48)
+
+
+async def _do_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE, hours: int) -> None:
+    global _SCANNING
+    if _SCANNING:
+        await update.message.reply_text("Scan deja en cours, patience...")
         return
 
-    hours = _parse_scan_arg(arg)
-    await _do_scan(update, ctx, hours=hours, label=arg or "24h")
+    _SCANNING = True
+    msg = await update.message.reply_text(
+        f"Scan lance — {hours}h | Mode {_BOT_MODE.upper()}\nRecuperation fixtures..."
+    )
+
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_scan(hours_ahead=hours, mode=_BOT_MODE, bankroll=_BANKROLL)
+        )
+        summary = format_scan_summary(result)
+        await msg.edit_text(summary, parse_mode=ParseMode.MARKDOWN)
+
+        for verdict in result["signals"]:
+            card = format_verdict_telegram(verdict, include_all_markets=True)
+            for chunk in _split_message(card):
+                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        log.error(f"Scan error: {e}", exc_info=True)
+        await msg.edit_text(f"Erreur scan: {e}")
+    finally:
+        _SCANNING = False
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("⏳ Chargement des statistiques…")
-    ghost   = get_ghost_stats()
-    recents = get_recent_signals(10)
-    text    = format_stats_telegram(ghost, recents)
-    await _send_long(update, text)
+    stats = get_ghost_stats()
+    w, l  = stats["total_wins"], stats["total_losses"]
+    total = w + l + stats["total_pushes"]
+    wr    = w / total * 100 if total > 0 else 0
+
+    text = (
+        f"APEX OMEGA — STATISTIQUES\n\n"
+        f"Bankroll       : {_BANKROLL:.0f}u\n"
+        f"Mode           : {_BOT_MODE.upper()}\n\n"
+        f"GHOST MEMORY\n"
+        f"  Patterns      : {stats['patterns_learned']}\n"
+        f"  Bloques       : {stats['blocked_patterns']}\n"
+        f"  En attente    : {stats['pending_signals']}\n\n"
+        f"HISTORIQUE\n"
+        f"  Signaux       : {total}\n"
+        f"  W/L           : {w}W / {l}L ({wr:.1f}%)\n"
+        f"  P&L           : {stats['total_pl']:+.2f}u\n"
+    )
+    await update.message.reply_text(text)
+
+
+async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    signals = get_recent_signals(limit=10)
+    if not signals:
+        await update.message.reply_text("Aucun signal enregistre.")
+        return
+
+    lines = ["10 DERNIERS SIGNAUX\n\n"]
+    icons = {"WIN": "V", "LOSS": "X", "PUSH": "~", "PENDING": "..."}
+    for s in signals:
+        ic = icons.get(s["result"], "?")
+        lines.append(
+            f"[{ic}] {s['team_home']} vs {s['team_away']}\n"
+            f"    {s['market_type']} | {s['pick']} @ {s['odds']:.2f} "
+            f"| Edge {s['edge']*100:.1f}% | {s['match_date']}\n"
+            f"    PL: {s['profit_loss']:+.2f}u\n\n"
+        )
+    await update.message.reply_text("".join(lines))
 
 
 async def cmd_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    current = _state["mode"]
-    new_mode = "aggressive" if current == "safe" else "safe"
-    _state["mode"] = new_mode
-    icon = "🔥" if new_mode == "aggressive" else "🛡️"
+    global _BOT_MODE
+    _BOT_MODE = "aggressive" if _BOT_MODE == "safe" else "safe"
     await update.message.reply_text(
-        f"{icon} Mode basculé : *{new_mode.upper()}*\n\n"
-        f"{'Seuils edge réduits — plus de signaux' if new_mode == 'aggressive' else 'Seuils edge stricts — signaux premium uniquement'}",
-        parse_mode=ParseMode.MARKDOWN_V2
+        f"Mode bascule -> {_BOT_MODE.upper()}\n\n"
+        "SAFE       = seuils hauts, moins de signaux\n"
+        "AGGRESSIVE = seuils bas, plus de signaux"
     )
 
 
-async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "🤖 *APEX OMEGA — Aide*\n\n"
-        "*Commandes scan :*\n"
-        "`/scan` — Prochaines 24h toutes ligues\n"
-        "`/scan today` — Matchs d'aujourd'hui\n"
-        "`/scan 1h` — Urgence \\(1 heure\\)\n"
-        "`/scan 2h` à `/scan 12h` — Fenêtre personnalisée\n\n"
-        "*Analyse directe \\(message libre\\) :*\n"
-        "`Arsenal Chelsea` — Recherche et analyse\n"
-        "`EPL Arsenal Chelsea 26/04` — Ligue \\+ date\n"
-        "`Champions League PSG Bayern` — Toutes infos\n\n"
-        "*Lecture des signaux :*\n"
-        "🚀 BET — Pari validé \\(edge ✅, cote ✅, confiance ✅\\)\n"
-        "📡 SIGNAL — Signal pur \\(cote hors plage BET\\)\n"
-        "⛔ NO BET — Critères non remplis\n"
-        "🚫 REJECT — Trust/DCS insuffisant\n"
-        "👻 Ghost — Signal bloqué par la mémoire des pertes",
-        parse_mode=ParseMode.MARKDOWN_V2
-    )
+async def cmd_bankroll(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    global _BANKROLL
+    args = ctx.args
+    if args and args[0].replace(".", "", 1).isdigit():
+        _BANKROLL = float(args[0])
+        await update.message.reply_text(f"Bankroll: {_BANKROLL:.0f} unites")
+    else:
+        await update.message.reply_text(f"Bankroll actuelle: {_BANKROLL:.0f}u\nUsage: /bankroll 5000")
 
 
-# ── NATURAL LANGUAGE MESSAGE HANDLER ──────────────────────────
+async def cmd_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    args = ctx.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /result <hash> WIN|LOSS|PUSH [profit]")
+        return
+    sig_hash = args[0]
+    result   = args[1].upper()
+    pl       = float(args[2]) if len(args) > 2 else 0.0
+    if result not in ("WIN", "LOSS", "PUSH"):
+        await update.message.reply_text("Resultat invalide: WIN, LOSS ou PUSH")
+        return
+    update_signal_result(sig_hash, result, pl)
+    await update.message.reply_text(f"Resultat enregistre: {sig_hash} -> {result} ({pl:+.2f}u)")
+
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Parse free-text messages for match queries.
-    Formats: "Arsenal Chelsea", "EPL Arsenal Chelsea 26/04", "PSG Bayern 2h"
-    """
     text = update.message.text.strip()
-    if not text:
+    if not text or text.startswith("/"):
         return
 
-    # Check if it looks like a scan command variant
-    text_lower = text.lower()
-    if text_lower.startswith("scan"):
-        hours = _parse_scan_arg(text_lower.replace("scan", "").strip())
-        await _do_scan(update, ctx, hours=hours, label=f"{hours}h")
+    match = _parse_match_request(text)
+    if not match:
         return
 
-    # Parse as match query
-    parsed = _parse_match_query(text)
-    if not parsed:
-        await update.message.reply_text(
-            "❓ Format non reconnu\\. Essayez :\n"
-            "`Arsenal Chelsea` ou\n"
-            "`EPL Arsenal Chelsea 26/04`\n"
-            "ou `/scan` pour un scan complet",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
-
-    team_home   = parsed["team_home"]
-    team_away   = parsed["team_away"]
-    match_date  = parsed.get("date")
-    league_id   = parsed.get("league_id")
+    team_home  = match["home"]
+    team_away  = match["away"]
+    match_date = match.get("date")
+    league_id  = match.get("league_id")
 
     await update.message.reply_text(
-        f"🔍 Analyse de *{team_home}* vs *{team_away}*…",
-        parse_mode=ParseMode.MARKDOWN_V2
+        f"Analyse: {team_home} vs {team_away}\nCollecte en cours..."
     )
 
     try:
-        verdict = await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_event_loop()
+        verdict = await loop.run_in_executor(
             None,
-            lambda: analyse_single_match(
-                team_home, team_away, match_date, league_id,
-                mode=_state["mode"], bankroll=_state["bankroll"]
+            lambda: analyse_by_teams(
+                team_home, team_away,
+                match_date=match_date, league_id=league_id,
+                mode=_BOT_MODE, bankroll=_BANKROLL
             )
         )
-        text_out = format_verdict_telegram(verdict)
-        await _send_long(update, text_out)
+        card = format_verdict_telegram(verdict, include_all_markets=True)
+        for chunk in _split_message(card):
+            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
-        log.error(f"Analysis error: {e}")
-        await update.message.reply_text(f"❌ Erreur d'analyse : `{str(e)[:100]}`",
-                                         parse_mode=ParseMode.MARKDOWN_V2)
+        log.error(f"Analysis error: {e}", exc_info=True)
+        await update.message.reply_text(f"Erreur: {e}")
 
 
-# ── INLINE KEYBOARD CALLBACKS ─────────────────────────────────
+def _parse_match_request(text: str) -> dict | None:
+    tokens = text.strip().split()
+    if len(tokens) < 2:
+        return None
 
-async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
+    result = {"home": None, "away": None, "date": None, "league_id": None}
 
-    data = query.data
-    if data == "scan_24":
-        await _do_scan(update, ctx, hours=24, label="24h", via_callback=True)
-    elif data == "scan_today":
-        from datetime import datetime
-        now = datetime.now()
-        remaining = 24 - now.hour
-        await _do_scan(update, ctx, hours=max(1, remaining), label="aujourd'hui", via_callback=True)
-    elif data == "stats":
-        ghost   = get_ghost_stats()
-        recents = get_recent_signals(10)
-        text    = format_stats_telegram(ghost, recents)
-        await _send_long_callback(query, text)
-    elif data == "mode_toggle":
-        current  = _state["mode"]
-        new_mode = "aggressive" if current == "safe" else "safe"
-        _state["mode"] = new_mode
-        icon = "🔥" if new_mode == "aggressive" else "🛡️"
-        await query.edit_message_text(
-            f"{icon} Mode : *{new_mode.upper()}*",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
+    # League alias at start
+    if tokens and tokens[0].lower().replace(" ", "") in LEAGUE_ALIASES:
+        result["league_id"] = LEAGUE_ALIASES[tokens[0].lower().replace(" ", "")]
+        tokens = tokens[1:]
 
+    if len(tokens) < 2:
+        return None
 
-# ── INTERNAL SCAN RUNNER ──────────────────────────────────────
+    # Date detection
+    date_re = re.compile(r"^(\d{1,2})[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?$")
+    clean = []
+    for t in tokens:
+        m = date_re.match(t)
+        if m:
+            day, month = m.group(1), m.group(2)
+            year = m.group(3) or str(datetime.now().year)
+            if len(year) == 2:
+                year = "20" + year
+            result["date"] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        else:
+            clean.append(t)
 
-async def _do_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
-                   hours: int = 24, label: str = "24h",
-                   via_callback: bool = False) -> None:
-    _state["scanning"] = True
-    msg_target = update.callback_query.message if via_callback else update.message
+    tokens = clean
+    if len(tokens) < 2:
+        return None
 
-    status_msg = await msg_target.reply_text(
-        f"⏳ Scan en cours \\(horizon: *{label}* | mode: *{_state['mode'].upper()}*\\)…",
-        parse_mode=ParseMode.MARKDOWN_V2
-    )
-
-    try:
-        scan_result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: run_scan(
-                hours_ahead=hours,
-                mode=_state["mode"],
-                bankroll=_state["bankroll"]
-            )
-        )
-
-        # Send summary first
-        summary = format_scan_summary_telegram(scan_result)
-        await status_msg.edit_text(summary, parse_mode=ParseMode.MARKDOWN_V2)
-
-        # Send each signal as individual message
-        for verdict in scan_result.get("signals", []):
-            try:
-                detail = format_verdict_telegram(verdict)
-                await msg_target.reply_text(detail, parse_mode=ParseMode.MARKDOWN_V2)
-                await asyncio.sleep(0.5)  # rate limit guard
-            except Exception as e:
-                log.error(f"Signal message error: {e}")
-
-    except Exception as e:
-        log.error(f"Scan error: {e}")
-        await status_msg.edit_text(f"❌ Erreur scan : `{str(e)[:200]}`",
-                                    parse_mode=ParseMode.MARKDOWN_V2)
-    finally:
-        _state["scanning"] = False
-
-
-# ── HELPERS ───────────────────────────────────────────────────
-
-def _parse_scan_arg(arg: str) -> int:
-    """Parse scan arg → hours. '1h' → 1, 'today' → remaining hours, '' → 24."""
-    if not arg or arg in ("", "24h", "24"):
-        return 24
-    if arg in ("today", "aujourd'hui", "auj"):
-        now = datetime.now()
-        return max(1, 24 - now.hour)
-    m = re.match(r"(\d+)\s*h", arg)
-    if m:
-        return max(1, min(int(m.group(1)), 168))
-    try:
-        return int(arg)
-    except ValueError:
-        return 24
-
-
-def _parse_match_query(text: str) -> Optional[dict]:
-    """
-    Parse natural-language match query.
-    Extracts: team_home, team_away, optional date (dd/mm), optional league keyword.
-    Examples:
-      "Arsenal Chelsea"
-      "PSG Lens 26/04"
-      "Champions League Real Madrid Bayern 25/04"
-    """
-    # Remove date if present
-    date_match = re.search(r"\b(\d{1,2})[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?\b", text)
-    date_str = None
-    if date_match:
-        day, month = date_match.group(1), date_match.group(2)
-        year = date_match.group(3) or str(datetime.now().year)
-        if len(year) == 2:
-            year = "20" + year
-        date_str = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-        text = text[:date_match.start()] + text[date_match.end():]
-
-    # Detect league keyword
-    league_id = None
-    league_keywords = {
-        "epl": 39, "premier league": 39, "pl": 39,
-        "liga": 140, "la liga": 140,
-        "bundesliga": 78, "bl": 78,
-        "serie a": 135, "seriea": 135,
-        "ligue 1": 61, "ligue1": 61, "l1": 61,
-        "champions": 2, "ucl": 2, "cl": 2,
-        "europa": 3, "uel": 3,
-        "conference": 848, "uecl": 848,
-    }
-
-    text_clean = text.strip()
-    for kw, lid in league_keywords.items():
-        if kw in text_clean.lower():
-            league_id = lid
-            text_clean = re.sub(kw, "", text_clean, flags=re.IGNORECASE).strip()
+    # vs separator
+    vs_idx = None
+    for i, t in enumerate(tokens):
+        if t.lower() in ("vs", "v", "contre", "-"):
+            vs_idx = i
             break
 
-    # Remaining text = team names
-    # Split by common separators or "vs"/"contre"
-    parts = re.split(r"\s+vs\.?\s+|\s+v\.?\s+|\s+contre\s+", text_clean, flags=re.IGNORECASE)
-    if len(parts) >= 2:
-        return {
-            "team_home": parts[0].strip(),
-            "team_away": parts[1].strip(),
-            "date": date_str,
-            "league_id": league_id,
-        }
+    if vs_idx is not None:
+        result["home"] = " ".join(tokens[:vs_idx]).strip()
+        result["away"] = " ".join(tokens[vs_idx+1:]).strip()
+    else:
+        mid = len(tokens) // 2
+        result["home"] = " ".join(tokens[:mid]).strip()
+        result["away"] = " ".join(tokens[mid:]).strip()
 
-    # Try splitting on 2+ consecutive caps words (team names)
-    words = text_clean.split()
-    if len(words) >= 2:
-        mid = len(words) // 2
-        return {
-            "team_home": " ".join(words[:mid]),
-            "team_away": " ".join(words[mid:]),
-            "date": date_str,
-            "league_id": league_id,
-        }
-
-    return None
+    if not result["home"] or not result["away"]:
+        return None
+    return result
 
 
-async def _send_long(update: Update, text: str) -> None:
-    """Split long messages to respect Telegram 4096 char limit."""
-    chunks = _split_message(text)
-    for chunk in chunks:
-        try:
-            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception as e:
-            # Try plain text fallback
-            plain = re.sub(r"[\\*`_\[\]]", "", chunk)
-            try:
-                await update.message.reply_text(plain[:4096])
-            except Exception:
-                log.error(f"Message send error: {e}")
-
-
-async def _send_long_callback(query, text: str) -> None:
-    chunks = _split_message(text)
-    for i, chunk in enumerate(chunks):
-        try:
-            if i == 0:
-                await query.edit_message_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
-            else:
-                await query.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception as e:
-            log.error(f"Callback message error: {e}")
-
-
-def _split_message(text: str, max_len: int = MAX_MESSAGE_LEN) -> list[str]:
-    """Split message at newlines respecting max length."""
-    if len(text) <= max_len:
+def _split_message(text: str, limit: int = 4000) -> list:
+    if len(text) <= limit:
         return [text]
-    chunks = []
-    current = ""
+    parts, current = [], ""
     for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_len:
-            if current:
-                chunks.append(current)
-            current = line
+        if len(current) + len(line) + 1 > limit:
+            parts.append(current)
+            current = line + "\n"
         else:
-            current = (current + "\n" + line) if current else line
+            current += line + "\n"
     if current:
-        chunks.append(current)
-    return chunks
+        parts.append(current)
+    return parts
 
 
-# ── BOT LAUNCHER ──────────────────────────────────────────────
+def build_app() -> Application:
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("scan",        cmd_scan))
+    app.add_handler(CommandHandler("scan_today",  cmd_scan_today))
+    app.add_handler(CommandHandler("scan_1h",     cmd_scan_1h))
+    app.add_handler(CommandHandler("scan_3h",     cmd_scan_3h))
+    app.add_handler(CommandHandler("scan_6h",     cmd_scan_6h))
+    app.add_handler(CommandHandler("scan_12h",    cmd_scan_12h))
+    app.add_handler(CommandHandler("scan_48h",    cmd_scan_48h))
+    app.add_handler(CommandHandler("stats",       cmd_stats))
+    app.add_handler(CommandHandler("history",     cmd_history))
+    app.add_handler(CommandHandler("mode",        cmd_mode))
+    app.add_handler(CommandHandler("bankroll",    cmd_bankroll))
+    app.add_handler(CommandHandler("result",      cmd_result))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    return app
+
 
 def run_bot() -> None:
-    """Start the Telegram bot (blocking)."""
     init_db()
+    log.info("APEX OMEGA Bot starting...")
+    app = build_app()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def post_init(application: Application) -> None:
+        cmds = [
+            BotCommand("scan",       "Scan 24h"),
+            BotCommand("scan_today", "Matchs du jour"),
+            BotCommand("scan_1h",    "Urgence 1h"),
+            BotCommand("scan_3h",    "Prochaines 3h"),
+            BotCommand("scan_6h",    "Prochaines 6h"),
+            BotCommand("scan_12h",   "Prochaines 12h"),
+            BotCommand("scan_48h",   "Prochaines 48h"),
+            BotCommand("stats",      "Stats & Ghost Memory"),
+            BotCommand("history",    "10 derniers signaux"),
+            BotCommand("mode",       "Safe / Aggressive"),
+            BotCommand("bankroll",   "Definir bankroll"),
+            BotCommand("result",     "Enregistrer resultat"),
+        ]
+        await application.bot.set_my_commands(cmds)
 
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("scan",   cmd_scan))
-    app.add_handler(CommandHandler("stats",  cmd_stats))
-    app.add_handler(CommandHandler("mode",   cmd_mode))
-    app.add_handler(CommandHandler("help",   cmd_help))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    log.info("🤖 APEX OMEGA Telegram Bot started")
-    app.run_polling(drop_pending_updates=True)
+    app.post_init = post_init
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
