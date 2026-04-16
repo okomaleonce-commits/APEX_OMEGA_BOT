@@ -331,6 +331,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("mode",        cmd_mode))
     app.add_handler(CommandHandler("bankroll",    cmd_bankroll))
     app.add_handler(CommandHandler("result",      cmd_result))
+    app.add_handler(CommandHandler("diagnose",    cmd_diagnose))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     return app
 
@@ -391,3 +392,46 @@ def _start_health_server() -> None:
     server = HTTPServer(("0.0.0.0", port), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info(f"Health server on :{port}")
+
+
+# ── /diagnose — API connectivity check ──────────────────────────────
+async def cmd_diagnose(update, ctx) -> None:
+    await update.message.reply_text("Diagnostic en cours...")
+
+    lines = ["APEX OMEGA — DIAGNOSTIC\n"]
+
+    # 1. API-Football
+    from ingestion.fixtures_service import check_api_status
+    apif = check_api_status()
+    if apif["ok"]:
+        lines.append(f"API-Football: OK")
+        lines.append(f"  Plan     : {apif.get('plan','?')}")
+        lines.append(f"  Email    : {apif.get('email','?')}")
+        lines.append(f"  Requetes : {apif.get('requests_used','?')} / {apif.get('requests_limit','?')}")
+        lines.append(f"  Mode     : {apif.get('header_mode','?')}")
+    else:
+        lines.append(f"API-Football: ERREUR")
+        lines.append(f"  HTTP     : {apif.get('http_status','?')}")
+        lines.append(f"  Erreur   : {apif.get('error','?')}")
+        lines.append(f"  Cle      : {apif.get('key_preview','non definie')}")
+        if apif.get("hint"):
+            lines.append(f"  Conseil  : {apif['hint']}")
+
+    # 2. Odds API
+    from core.config import ODDS_API_KEY, ODDS_BOOKMAKERS
+    lines.append(f"\nOdds API key : {'SET' if ODDS_API_KEY else 'MANQUANTE'}")
+    lines.append(f"Bookmakers   : {', '.join(ODDS_BOOKMAKERS)}")
+
+    # 3. FootyStats
+    from core.config import FOOTYSTATS_KEY
+    lines.append(f"FootyStats   : {'SET' if FOOTYSTATS_KEY else 'MANQUANTE'}")
+
+    # 4. DB
+    from core.database import _resolve_db_path
+    lines.append(f"\nBase de donnees : {_resolve_db_path()}")
+
+    # 5. Bot mode
+    lines.append(f"Mode         : {_BOT_MODE.upper()}")
+    lines.append(f"Bankroll     : {_BANKROLL:.0f}u")
+
+    await update.message.reply_text("\n".join(lines))
