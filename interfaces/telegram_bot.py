@@ -336,6 +336,7 @@ def build_app() -> Application:
 
 
 def run_bot() -> None:
+    _start_health_server()   # bind port for Render Web Service
     log.info("APEX OMEGA Bot starting...")
     app = build_app()
 
@@ -358,3 +359,35 @@ def run_bot() -> None:
 
     app.post_init = post_init
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+def _start_health_server() -> None:
+    """
+    Minimal HTTP server on $PORT (default 10000).
+    Satisfies Render Web Service port-binding check.
+    Runs in a daemon thread — zero impact on the Telegram polling loop.
+    GET /        → 200 {"status": "ok", ...}
+    GET /health  → same
+    """
+    import os, threading, json as _json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    port = int(os.environ.get("PORT", 10000))
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = _json.dumps({
+                "status":  "ok",
+                "service": "APEX OMEGA Bot",
+                "version": "1.0",
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a): pass  # silence access logs
+
+    server = HTTPServer(("0.0.0.0", port), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    log.info(f"Health server on :{port}")
