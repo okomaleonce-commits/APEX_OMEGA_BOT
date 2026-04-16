@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # APEX OMEGA — startup.sh
-# Safe startup: ensure data dir exists, then launch bot
 set -e
-
-echo "=== APEX OMEGA BOOT ==="
+echo "=== APEX OMEGA BOOT $(date -u) ==="
 echo "Python: $(python --version)"
-echo "DB_PATH: ${DB_PATH:-/var/data/apex_signals.db}"
-echo "DATA_DIR: ${DATA_DIR:-/var/data}"
+echo "PORT:   ${PORT:-10000}"
+echo "DB:     ${DB_PATH:-/var/data/apex_signals.db}"
 
-# Ensure data directory
-mkdir -p "${DATA_DIR:-/var/data}" 2>/dev/null || mkdir -p /tmp/apex_data
-export DATA_DIR="${DATA_DIR:-/var/data}"
-export DB_PATH="${DB_PATH:-${DATA_DIR}/apex_signals.db}"
+# Ensure data dir writable (Render disk may take a moment)
+for dir in "${DATA_DIR:-/var/data}" "/tmp"; do
+  if mkdir -p "$dir" 2>/dev/null && touch "$dir/.test" 2>/dev/null; then
+    rm -f "$dir/.test"
+    export DATA_DIR="$dir"
+    export DB_PATH="$dir/apex_signals.db"
+    echo "DATA_DIR resolved: $DATA_DIR"
+    break
+  fi
+done
 
-echo "Starting bot..."
 exec python main.py
