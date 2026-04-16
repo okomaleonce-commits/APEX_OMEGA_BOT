@@ -122,12 +122,12 @@ async def _do_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE, hours: int) -
             lambda: run_scan(hours_ahead=hours, mode=_BOT_MODE, bankroll=_BANKROLL)
         )
         summary = format_scan_summary(result)
-        await msg.edit_text(summary, parse_mode=ParseMode.MARKDOWN)
+        await msg.edit_text(summary)
 
         for verdict in result["signals"]:
             card = format_verdict_telegram(verdict, include_all_markets=True)
             for chunk in _split_message(card):
-                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+                await update.message.reply_text(chunk)
 
     except Exception as e:
         log.error(f"Scan error: {e}", exc_info=True)
@@ -242,7 +242,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         )
         card = format_verdict_telegram(verdict, include_all_markets=True)
         for chunk in _split_message(card):
-            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(chunk)
     except Exception as e:
         log.error(f"Analysis error: {e}", exc_info=True)
         await update.message.reply_text(f"Erreur: {e}")
