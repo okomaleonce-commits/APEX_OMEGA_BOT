@@ -92,8 +92,10 @@ def build_verdict(
 
     thin_data = trust_score < TRUST_THIN_DATA_MIN
 
-    # ── GATE 2: THIN DATA route blocks bet ─────────────────────────
-    if thin_data and tier not in ("P0", "N1"):
+    # ── GATE 2: THIN DATA ─────────────────────────────────────────────
+    # N2/N3 need trust>=70 — EXCEPT when using league_avg fallback
+    # (league_avg = always SIGNAL, never BET — enforced in _make_market)
+    if thin_data and tier not in ("P0","N1") and best_src not in ("league_avg","goals_proxy"):
         return _reject(fixture, trust_result, model_result,
                        f"THIN_DATA: trust {trust_score} < 70 for {tier} league")
 
