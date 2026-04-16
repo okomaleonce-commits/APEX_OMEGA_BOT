@@ -97,10 +97,10 @@ def analyse_fixture(
         xg_away = compute_goals_proxy_xg(form_away, league_cfg["home_adv"], is_home=False)
 
     odds_data = get_odds_for_event(
-        sport_key="soccer",
+        sport_key="football",
         team_home=fixture["team_home"],
         team_away=fixture["team_away"],
-        markets=["h2h", "totals", "btts"]
+        league_id=fixture.get("league_id"),
     )
 
     trust_result = compute_trust(

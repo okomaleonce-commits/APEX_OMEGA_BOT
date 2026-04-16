@@ -91,3 +91,65 @@ If reliability drops below **40%** over ≥5 samples → auto-REJECT.
 ---
 
 *NO BET is the default. A signal is emitted only when data, model, and odds align.*
+
+---
+
+## 🔌 Sources de Données
+
+### Architecture des APIs
+
+```
+API-Football (api-sports.io)     → Fixtures, Form, H2H
+FootyStats                       → xG, BTTS%, O/U% (source premium)
+odds-api.io                      → Cotes live (Bet365, Pinnacle, 265+ bookies)
+```
+
+### Problème fréquent : clé API incorrecte
+
+Le bot utilise **odds-api.io** (pas `the-odds-api.com` qui est un service différent).
+
+| Service | Base URL | Site pour clé |
+|---------|----------|---------------|
+| API-Football | `v3.football.api-sports.io` | dashboard.api-football.com |
+| odds-api.io | `api.odds-api.io/v3` | odds-api.io/#pricing |
+| FootyStats | `api.football-data-api.com` | footystats.org |
+
+Variables Render requises :
+```
+API_FOOTBALL_KEY = ta_cle_api_sports_io
+ODDS_API_KEY     = ta_cle_odds_api_io     ← obtenir sur odds-api.io
+FOOTYSTATS_KEY   = ta_cle_footystats      ← optionnel (améliore xG)
+BOT_TOKEN        = token_telegram
+CHAT_ID          = ton_chat_id
+```
+
+---
+
+## 🤖 MCP Server odds-api.io — Clarification
+
+Le repo `odds-api-io/odds-api-mcp-server` est un serveur **Node.js** conçu pour
+**Claude Desktop** et **Cursor** (assistants IA locaux). Il ne peut pas être intégré
+dans un bot Python déployé sur Render.
+
+Ce bot utilise l'**API REST directe** `api.odds-api.io/v3` — fonctionnellement
+équivalente aux 22 outils MCP, sans dépendance Node.js.
+
+### Utiliser le MCP avec Claude Desktop (séparément)
+
+Si tu veux utiliser les outils MCP depuis Claude Desktop :
+```json
+{
+  "mcpServers": {
+    "odds-api": {
+      "command": "npx",
+      "args": ["odds-api-mcp-server"],
+      "env": {
+        "ODDS_API_KEY": "ta_cle"
+      }
+    }
+  }
+}
+```
+Fichier : `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Ce MCP Claude Desktop et le bot Render sont **deux systèmes indépendants**.

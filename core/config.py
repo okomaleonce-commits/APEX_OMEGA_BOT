@@ -11,7 +11,7 @@ load_dotenv()
 API_FOOTBALL_KEY  = os.getenv("API_FOOTBALL_KEY", "")
 FOOTYSTATS_KEY    = os.getenv("FOOTYSTATS_KEY", "")
 ODDS_API_KEY      = os.getenv("ODDS_API_KEY", "")
-ODDS_BOOKMAKERS   = os.getenv("ODDS_API_BOOKMAKERS", "Bet365,Pinnacle").split(",")
+ODDS_BOOKMAKERS   = os.getenv("ODDS_API_BOOKMAKERS", "Bet365,Pinnacle,Betfair").split(",")
 
 BOT_TOKEN         = os.getenv("BOT_TOKEN", "")
 CHAT_ID           = os.getenv("CHAT_ID", "")
@@ -25,7 +25,7 @@ SCAN_HOURS_AHEAD  = int(os.getenv("SCAN_HOURS_AHEAD", "24"))
 # ─── API ENDPOINTS ────────────────────────────────────────────
 APIF_BASE         = "https://v3.football.api-sports.io"
 FOOTYSTATS_BASE   = "https://api.football-data-api.com"
-ODDS_API_BASE     = "https://api.the-odds-api.com/v4"
+ODDS_API_BASE     = "https://api.odds-api.io/v3"   # odds-api.io (not the-odds-api.com)
 
 # ─── LEAGUE REGISTRY ─────────────────────────────────────────
 # tier: P0=UEFA KO, N1=Top5, N2=Secondary, N3=Other
