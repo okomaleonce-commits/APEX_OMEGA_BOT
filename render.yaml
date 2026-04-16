@@ -3,7 +3,7 @@ services:
     name: apex-omega-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: bash startup.sh
     envVars:
       - key: BOT_TOKEN
         sync: false

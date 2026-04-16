@@ -62,7 +62,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "  `ligue1 PSG Lyon`\n"
         "  `ucl Man City Real Madrid`\n"
         "  `Arsenal Chelsea 15/07`\n\n"
-        f"Mode: *{_BOT_MODE\\.upper\\(\\)}* \\| Bankroll: *{_BANKROLL:.0f}u*"
+        f"Mode: {_BOT_MODE.upper()} | Bankroll: {_BANKROLL:.0f}u"
     )
     # Use simpler text to avoid MarkdownV2 issues
     simple = (
