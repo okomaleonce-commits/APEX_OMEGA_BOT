@@ -387,9 +387,20 @@ async def cmd_diagnose(update, ctx) -> None:
             lines.append(f"  Conseil  : {apif['hint']}")
 
     # 2. Odds API
-    from core.config import ODDS_API_KEY, ODDS_BOOKMAKERS
-    lines.append(f"\nOdds API key : {'SET' if ODDS_API_KEY else 'MANQUANTE'}")
-    lines.append(f"Bookmakers   : {', '.join(ODDS_BOOKMAKERS)}")
+    from ingestion.odds_service import check_odds_api_status
+    odds_st = check_odds_api_status()
+    if odds_st["ok"]:
+        lines.append(f"\nOdds API: OK")
+        lines.append(f"  Marches soccer : {odds_st.get('soccer_markets','?')}")
+        lines.append(f"  Requetes restantes : {odds_st.get('requests_remaining','?')}")
+        lines.append(f"  Bookmakers : {', '.join(odds_st.get('bookmakers',[]))}")
+    else:
+        lines.append(f"\nOdds API: ERREUR")
+        lines.append(f"  HTTP  : {odds_st.get('http_status','?')}")
+        lines.append(f"  Erreur: {odds_st.get('error','?')}")
+        lines.append(f"  Cle   : {odds_st.get('key_preview','non definie')}")
+        if odds_st.get('hint'):
+            lines.append(f"  Conseil: {odds_st['hint']}")
 
     # 3. FootyStats
     from core.config import FOOTYSTATS_KEY

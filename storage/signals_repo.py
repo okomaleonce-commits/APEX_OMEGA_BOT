@@ -19,8 +19,9 @@ def make_signal_hash(league_id: int, team_home: str, team_away: str,
     return hashlib.md5(key.encode()).hexdigest()[:16]
 
 
-def get_edge_bucket(edge: float) -> str:
-    """Bucket edge into ranges for hashing."""
+def get_edge_bucket(edge) -> str:
+    """Bucket edge into ranges for hashing. Handles None (model-only mode)."""
+    if edge is None:  return "model-only"
     if edge < 0.03:   return "0-3pct"
     elif edge < 0.05: return "3-5pct"
     elif edge < 0.08: return "5-8pct"

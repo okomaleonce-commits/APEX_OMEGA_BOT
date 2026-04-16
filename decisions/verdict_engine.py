@@ -59,9 +59,15 @@ def build_verdict(
     dcs         = trust_result["dcs"]
 
     # ── GATE 0: Trust ───────────────────────────────────────────────
-    if trust_score < TRUST_REJECT_THRESHOLD:
+    # In model-only mode (no bookmaker odds), lower threshold to 40
+    odds_1x2    = (odds_data.get("odds_1x2") or {})
+    model_only  = not any([odds_1x2.get("home"), odds_1x2.get("draw"), odds_1x2.get("away")])
+    trust_min   = 40 if model_only else TRUST_REJECT_THRESHOLD
+
+    if trust_score < trust_min:
         return _reject(fixture, trust_result, model_result,
-                       f"TRUST_FAIL: score {trust_score} < {TRUST_REJECT_THRESHOLD}")
+                       f"TRUST_FAIL: score {trust_score} < {trust_min}"
+                       + (" [model-only]" if model_only else ""))
 
     # ── GATE 1: DCS ─────────────────────────────────────────────────
     if dcs < 0.58:
@@ -245,10 +251,19 @@ def _make_market(
     signal = "NO_BET"
     reject_reason = []
 
-    # Odd checks
-    if odd and odd < ODD_MIN:
+    # Model-only mode: no bookmaker odds available
+    if odd is None:
+        # Emit SIGNAL if model probability is strong enough
+        if model_prob >= 0.55 and conf >= CONFIDENCE_MIN_SIGNAL and market_type != "draw":
+            signal = "SIGNAL"
+        elif model_prob >= 0.65 and market_type == "draw":
+            signal = "SIGNAL"
+        else:
+            reject_reason.append(f"model-only: P={model_prob:.2f} < threshold or conf={conf}<{CONFIDENCE_MIN_SIGNAL}")
+    # Odd checks (odds available)
+    elif odd < ODD_MIN:
         reject_reason.append(f"odd {odd} < min {ODD_MIN}")
-    elif odd and odd > ODD_MAX_BET and conf >= CONFIDENCE_MIN_BET:
+    elif odd > ODD_MAX_BET and conf >= CONFIDENCE_MIN_BET:
         signal = "SIGNAL"  # signal only, no bet
     elif edge is None or edge < edge_min:
         reject_reason.append(f"edge {edge or 0:.3f} < min {edge_min:.3f}")
@@ -257,7 +272,7 @@ def _make_market(
     elif market_type == "draw" and edge < EDGE_MIN_DRAW:
         reject_reason.append(f"draw edge {edge:.3f} < {EDGE_MIN_DRAW}")
     else:
-        if odd and odd <= ODD_MAX_BET:
+        if odd <= ODD_MAX_BET:
             signal = "BET"
         else:
             signal = "SIGNAL"

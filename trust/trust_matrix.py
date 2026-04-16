@@ -65,14 +65,19 @@ def compute_trust(
         else:                pts = 3    # suspicious
     elif odds_1x2.get("home"):
         pts = 5  # partial odds
+    else:
+        pts = 5  # model-only: no odds API, not penalised
     sub["odds_integrity"] = pts
 
     # ── 4. RECENCY / FRESHNESS (15 pts) ────────────────────────────
-    pts = 15
-    data_age = odds_data.get("odds_age_sec", 9999) / 60  # → minutes
-    if data_age > TRUST_MAX_DATA_AGE_MIN:
+    data_age = odds_data.get("odds_age_sec", 9999) / 60
+    if data_age >= 166:  # 9999s/60 — means "no odds source", not stale
+        pts = 8          # neutral score for model-only mode
+    elif data_age > TRUST_MAX_DATA_AGE_MIN:
         penalty = min(10, int((data_age - TRUST_MAX_DATA_AGE_MIN) / 30) * 3)
         pts = max(0, 15 - penalty)
+    else:
+        pts = 15
     sub["recency_freshness"] = pts
 
     # ── 5. SOURCE AGREEMENT (15 pts) ───────────────────────────────
@@ -89,7 +94,7 @@ def compute_trust(
         elif gap <= 0.20: pts = 5
         else:             pts = 2
     else:
-        pts = 5  # can't measure, partial credit
+        pts = 8  # model-only: no odds to compare, neutral credit
     sub["source_agreement"] = pts
 
     # ── 6. FORM QUALITY (10 pts) ───────────────────────────────────
