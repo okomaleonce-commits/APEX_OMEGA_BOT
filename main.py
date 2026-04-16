@@ -6,64 +6,64 @@ Entry point:
   python main.py match Arsenal Chelsea
   python main.py report / history / result
 """
-import sys
-import os
-import threading
-import logging
+import sys, os, threading, socket, logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ── project root on PYTHONPATH ───────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import core.logger  # noqa — sets up logging
+import core.logger  # noqa
 log = logging.getLogger("apex.main")
 
-PORT = int(os.environ.get("PORT", 10000))  # Render injects $PORT
+PORT = int(os.environ.get("PORT", 10000))
 
 
-# ── Minimal health-check HTTP server ─────────────────────────────────
-class HealthHandler(BaseHTTPRequestHandler):
+class _ReuseHTTPServer(HTTPServer):
+    """HTTPServer with SO_REUSEADDR so fast restarts don't hit EADDRINUSE."""
+    allow_reuse_address = True
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b'{"status":"ok","service":"apex-omega-bot"}'
+        body = b'{"status":"ok","service":"apex-omega-bot","version":"1.0"}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):
-        pass  # Silence HTTP access logs
+    def log_message(self, *a):
+        pass  # silence access logs
 
 
 def _start_health_server():
-    """Run tiny HTTP server in daemon thread so Render sees an open port."""
+    """Daemon thread: HTTP health-check server for Render port detection."""
     try:
-        server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-        log.info(f"Health-check server listening on port {PORT}")
+        server = _ReuseHTTPServer(("0.0.0.0", PORT), _HealthHandler)
+        log.info(f"Health-check listening on :{PORT}")
         server.serve_forever()
+    except OSError as e:
+        log.warning(f"Health server bind error: {e} — port {PORT} may already be in use")
     except Exception as e:
-        log.error(f"Health server error: {e}")
+        log.error(f"Health server crashed: {e}")
 
 
 def main():
-    # ── DB init ──────────────────────────────────────────────────────
+    # ── DB ───────────────────────────────────────────────────────────
     try:
         from core.database import init_db
         init_db()
     except Exception as e:
-        log.error(f"DB init failed: {e} — continuing anyway")
+        log.error(f"DB init failed: {e} — continuing")
 
-    # ── CLI mode ─────────────────────────────────────────────────────
-    cli_cmds = {"scan", "match", "report", "history", "result"}
-    if len(sys.argv) > 1 and sys.argv[1] in cli_cmds:
+    # ── CLI ──────────────────────────────────────────────────────────
+    if len(sys.argv) > 1 and sys.argv[1] in {"scan","match","report","history","result"}:
         from interfaces.cli import run_cli
         run_cli(sys.argv[1:])
         return
 
-    # ── Bot mode: start health server in background then run bot ─────
-    health_thread = threading.Thread(target=_start_health_server, daemon=True)
-    health_thread.start()
+    # ── Health thread (daemon — dies with main) ───────────────────────
+    threading.Thread(target=_start_health_server, daemon=True, name="health").start()
 
+    # ── Telegram bot (blocking) ───────────────────────────────────────
     from interfaces.telegram_bot import run_bot
     run_bot()
 
