@@ -1,0 +1,33 @@
+services:
+  - type: worker
+    name: apex-omega-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    disk:
+      name: apex-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: FOOTYSTATS_KEY
+        sync: false
+      - key: ODDS_API_KEY
+        sync: false
+      - key: ODDS_API_BOOKMAKERS
+        value: Bet365,Pinnacle
+      - key: DB_PATH
+        value: /var/data/apex_signals.db
+      - key: DATA_DIR
+        value: /var/data
+      - key: BANKROLL
+        value: "1000"
+      - key: DEFAULT_MODE
+        value: safe
+      - key: SCAN_HOURS_AHEAD
+        value: "24"
