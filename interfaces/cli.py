@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from tabulate import tabulate
 
 from core.config import BANKROLL, DEFAULT_MODE
-from core.database import init_db
+# init_db called in main.py
 from scanner.scan_engine import run_scan, analyse_by_teams
 from storage.signals_repo import get_ghost_stats, get_recent_signals, update_signal_result
 
@@ -65,7 +65,7 @@ def _parse_window(w: str) -> int:
 
 
 def run_cli(argv=None):
-    init_db(); _banner()
+    _banner()
     p = argparse.ArgumentParser(prog="apex-omega")
     sub = p.add_subparsers(dest="cmd")
 

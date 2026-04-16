@@ -16,7 +16,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from core.config import BOT_TOKEN, BANKROLL, DEFAULT_MODE
-from core.database import init_db
+# init_db called in main.py
 from scanner.scan_engine import run_scan, analyse_by_teams
 from decisions.rationale_builder import format_verdict_telegram, format_scan_summary
 from storage.signals_repo import get_ghost_stats, get_recent_signals, update_signal_result
@@ -336,7 +336,6 @@ def build_app() -> Application:
 
 
 def run_bot() -> None:
-    init_db()
     log.info("APEX OMEGA Bot starting...")
     app = build_app()
 

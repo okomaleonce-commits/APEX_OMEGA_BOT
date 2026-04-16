@@ -315,6 +315,7 @@ def _reject(fixture, trust_result, model_result, reason: str) -> dict:
     return {
         "status":    "REJECT",
         "fixture":   fixture,
+        "league_cfg": get_league_cfg(fixture.get("league_id",0)),
         "trust":     trust_result,
         "model":     model_result,
         "reason":    reason,
@@ -327,6 +328,7 @@ def _no_bet(fixture, trust_result, model_result, markets, reason: str, mode: str
     return {
         "status":       "NO_BET",
         "fixture":      fixture,
+        "league_cfg":   get_league_cfg(fixture.get("league_id",0)),
         "trust":        trust_result,
         "model":        model_result,
         "all_markets":  markets,

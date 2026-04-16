@@ -25,6 +25,8 @@ services:
         value: "1000"
       - key: DEFAULT_MODE
         value: safe
+      - key: PYTHONPATH
+        value: /opt/render/project/src
     disk:
       name: apex-data
       mountPath: /var/data
