@@ -59,20 +59,36 @@ def build_verdict(
     dcs         = trust_result["dcs"]
 
     # ── GATE 0: Trust ───────────────────────────────────────────────
-    # In model-only mode (no bookmaker odds), lower threshold to 40
-    odds_1x2    = (odds_data.get("odds_1x2") or {})
-    model_only  = not any([odds_1x2.get("home"), odds_1x2.get("draw"), odds_1x2.get("away")])
-    trust_min   = 40 if model_only else TRUST_REJECT_THRESHOLD
+    odds_1x2   = (odds_data.get("odds_1x2") or {})
+    model_only = not any([odds_1x2.get("home"), odds_1x2.get("draw"), odds_1x2.get("away")])
+    
+    # Detect data quality tier for threshold calibration
+    xg_h_src = xg_home.get("source", "none") if xg_home else "none"
+    xg_a_src = xg_away.get("source", "none") if xg_away else "none"
+    best_src  = "footystats" if "footystats" in (xg_h_src, xg_a_src) else                 "goals_proxy" if "goals_proxy" in (xg_h_src, xg_a_src) else                 "league_avg" if "league_avg" in (xg_h_src, xg_a_src) else "none"
+    
+    # Threshold: lower when data is limited (never below 15)
+    if not model_only:
+        trust_min = TRUST_REJECT_THRESHOLD        # 50 — with odds
+    elif best_src in ("footystats", "goals_proxy"):
+        trust_min = 35                             # 35 — model-only with real data
+    elif best_src == "league_avg":
+        trust_min = 15                             # 15 — league avg fallback (WATCH only)
+    else:
+        trust_min = TRUST_REJECT_THRESHOLD        # 50 — no data = reject
 
     if trust_score < trust_min:
         return _reject(fixture, trust_result, model_result,
-                       f"TRUST_FAIL: score {trust_score} < {trust_min}"
-                       + (" [model-only]" if model_only else ""))
+                       f"TRUST_FAIL: score {trust_score} < {trust_min} [{best_src}]")
 
     # ── GATE 1: DCS ─────────────────────────────────────────────────
-    if dcs < 0.58:
+    # DCS thresholds by data source:
+    #   footystats/goals_proxy: 0.58 (standard APEX gate)
+    #   league_avg only: 0.10 (allows WATCH signals)
+    dcs_min = 0.10 if best_src == "league_avg" and model_only else 0.58
+    if dcs < dcs_min:
         return _reject(fixture, trust_result, model_result,
-                       f"DCS_FAIL: {dcs:.2f} < 0.58")
+                       f"DCS_FAIL: {dcs:.2f} < {dcs_min} [{best_src}]")
 
     thin_data = trust_score < TRUST_THIN_DATA_MIN
 
@@ -253,13 +269,15 @@ def _make_market(
 
     # Model-only mode: no bookmaker odds available
     if odd is None:
-        # Emit SIGNAL if model probability is strong enough
-        if model_prob >= 0.55 and conf >= CONFIDENCE_MIN_SIGNAL and market_type != "draw":
-            signal = "SIGNAL"
-        elif model_prob >= 0.65 and market_type == "draw":
+        # Thresholds by probability and confidence
+        if market_type == "draw":
+            ok = model_prob >= 0.60 and conf >= 10
+        else:
+            ok = model_prob >= 0.52 and conf >= 10
+        if ok:
             signal = "SIGNAL"
         else:
-            reject_reason.append(f"model-only: P={model_prob:.2f} < threshold or conf={conf}<{CONFIDENCE_MIN_SIGNAL}")
+            reject_reason.append(f"model-only: P={model_prob:.2f} conf={conf}")
     # Odd checks (odds available)
     elif odd < ODD_MIN:
         reject_reason.append(f"odd {odd} < min {ODD_MIN}")

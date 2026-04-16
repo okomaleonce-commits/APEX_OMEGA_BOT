@@ -133,14 +133,27 @@ def compute_trust(
 def _compute_dcs(xg_home, xg_away, form_home, form_away) -> float:
     """DCS: Data Confidence Score [0..1.0] for the APEX model."""
     dcs = 0.0
-    if xg_home.get("source") == "footystats": dcs += 0.30
-    elif xg_home.get("source") == "goals_proxy": dcs += 0.10
-    if xg_away.get("source") == "footystats": dcs += 0.30
-    elif xg_away.get("source") == "goals_proxy": dcs += 0.10
+    src_h = xg_home.get("source","none")
+    src_a = xg_away.get("source","none")
+    
+    # xG source contributions
+    if src_h == "footystats":    dcs += 0.30
+    elif src_h == "goals_proxy": dcs += 0.15
+    elif src_h == "league_avg":  dcs += 0.08  # calibrated fallback
+    
+    if src_a == "footystats":    dcs += 0.30
+    elif src_a == "goals_proxy": dcs += 0.15
+    elif src_a == "league_avg":  dcs += 0.08  # calibrated fallback
+
+    # Form data contributions
     if len(form_home) >= 5: dcs += 0.20
     elif len(form_home) >= 3: dcs += 0.10
+    elif len(form_home) >= 1: dcs += 0.05
+    
     if len(form_away) >= 5: dcs += 0.20
     elif len(form_away) >= 3: dcs += 0.10
+    elif len(form_away) >= 1: dcs += 0.05
+
     return round(min(1.0, dcs), 2)
 
 
